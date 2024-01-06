@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/go-resty/resty/v2"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -9,6 +10,15 @@ import (
 )
 
 func TestWebhook(t *testing.T) {
+	// тип http.HandlerFunc реализует интерфейс http.Handler
+	// это поможет передать хендлер тестовому серверу
+	handler := http.HandlerFunc(webhook)
+	// запускаем тестовый сервер, будет выбран первый свободный порт
+	srv := httptest.NewServer(handler)
+	// останавливаем сервер после завершения теста
+	defer srv.Close()
+
+	// ожидаемое содержимое тела ответа при успешном запросе
 	successBody := `{
         "response": {
             "text": "Извините, я пока ничего не умею"
@@ -16,6 +26,7 @@ func TestWebhook(t *testing.T) {
         "version": "1.0"
     }`
 
+	// описываем набор данных: метод запроса, ожидаемый код ответа, ожидаемое тело
 	testCases := []struct {
 		method       string
 		expectedCode int
@@ -29,14 +40,19 @@ func TestWebhook(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.method, func(t *testing.T) {
-			r := httptest.NewRequest(tc.method, "/", nil)
-			w := httptest.NewRecorder()
+			// делаем запрос с помощью библиотеки resty к адресу запущенного сервера,
+			// который хранится в поле URL соответствующей структуры
+			req := resty.New().R()
+			req.Method = tc.method
+			req.URL = srv.URL
 
-			webhook(w, r)
+			resp, err := req.Send()
+			assert.NoError(t, err, "error making HTTP request")
 
-			assert.Equal(t, tc.expectedCode, w.Code, "Код ответа не совпадает с ожидаемым")
+			assert.Equal(t, tc.expectedCode, resp.StatusCode(), "Response code didn't match expected")
+			// проверяем корректность полученного тела ответа, если мы его ожидаем
 			if tc.expectedBody != "" {
-				assert.JSONEq(t, tc.expectedBody, w.Body.String(), "Тело ответа не совпадает с ожидаемым")
+				assert.JSONEq(t, tc.expectedBody, string(resp.Body()))
 			}
 		})
 	}
